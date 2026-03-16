@@ -14,7 +14,7 @@ android {
         applicationId = "com.rem01gaming.systemmonitor"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = "1.0"
     }
 
@@ -32,6 +32,7 @@ android {
 
         debug {
             isMinifyEnabled = false
+            isDebuggable = true
         }
     }
     compileOptions {

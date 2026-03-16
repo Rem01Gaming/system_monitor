@@ -30,13 +30,15 @@ import java.io.File
 import java.io.FileOutputStream
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
+import java.nio.file.StandardOpenOption
 
 // @SuppressLint("StaticFieldLeak") is intentional, this runs as a CLI tool via app_process,
 // not inside an Android Activity lifecycle, so there is no real Context leak risk here.
 
 @SuppressLint("StaticFieldLeak", "DiscouragedPrivateApi", "PrivateApi")
 object MainKt {
-    private const val DEFAULT_OUTPUT_PATH = "/data/adb/.config/encore/system_status"
     private const val POLL_INTERVAL_MS = 500L
     private const val UNKNOWN_APP = "unknown 0 0"
     private const val NONE_APP = "none 0 0"
@@ -74,35 +76,73 @@ object MainKt {
     @Volatile
     private var lastStatus = ""
 
-    private var outputPath = DEFAULT_OUTPUT_PATH
+    private var outputPath = ""
+    private var lockFilePath: String? = null
 
     @JvmStatic
     fun main(args: Array<String>) {
-        // Custom output path can be passed as an argument
-        // app_process / com.rem01gaming.systemmonitor.MainKt /custom/output/path
-        if (args.isNotEmpty()) {
-            outputPath = args[0]
+        // Usage: app_process / com.rem01gaming.systemmonitor.MainKt <output_path> [lock_file_path]
+        if (args.isEmpty()) {
+            System.err.println("Usage: <output_path> [lock_file_path]")
+            System.err.println("ERROR: output path is required.")
+            return
+        }
+        outputPath = args[0]
+
+        if (args.size >= 2) {
+            lockFilePath = args[1]
         }
 
         bypassHiddenApiRestrictions()
         setupSystemContext()
 
         if (systemContext == null) {
-            System.err.println("System context is null.")
+            System.err.println("ERROR: System context is null.")
             return
         }
 
         if (!initializeServices()) {
-            System.err.println("Failed to initialize services, exiting.")
+            System.err.println("ERROR: Failed to initialize services, exiting.")
             return
         }
 
+        val lockChannel = acquireLock()
+
         val monitorThread = Thread.currentThread()
         Runtime.getRuntime().addShutdownHook(Thread {
+            lockChannel?.close()
             monitorThread.interrupt()
         })
 
         runMonitorLoop()
+    }
+
+    private fun acquireLock(): FileChannel? {
+        val path = lockFilePath ?: return null
+        return try {
+            val file = File(path)
+            file.parentFile?.mkdirs()
+
+            val channel = FileChannel.open(
+                file.toPath(),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE
+            )
+
+            val lock: FileLock? = channel.tryLock()
+            if (lock == null) {
+                System.err.println("ERROR: Another instance holds the lock at '$path'.")
+                channel.close()
+                System.exit(1)
+                null
+            } else {
+                channel
+            }
+        } catch (e: Exception) {
+            System.err.println("ERROR: Failed to acquire lock at '$path': ${e.message}")
+            System.exit(1)
+            null
+        }
     }
 
     private fun runMonitorLoop() {
@@ -137,7 +177,7 @@ object MainKt {
                     ?: error("getSystemContext() returned null")
 
         } catch (e: Exception) {
-            System.err.println("Failed to set up system context:")
+            System.err.println("ERROR: Failed to set up system context:")
             e.printStackTrace()
         }
     }
