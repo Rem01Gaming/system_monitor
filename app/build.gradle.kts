@@ -27,7 +27,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = gitRevisionCount()
-        versionName = "1.0"
+        versionName = "1.0.1"
     }
 
     buildTypes {
